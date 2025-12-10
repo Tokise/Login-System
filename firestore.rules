@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper to get user data
+    // Note: Since we encrypt 'role', we cannot easily check it in Rules unless we store a decrypted copy 
+    // OR we trust the Custom Claims (best practice) but we are using Firestore Doc for roles here.
+    // IF roles are encrypted on the doc, Rules CANNOT read them to enforce permissions!
+    // CRITICAL: We MUST store 'role' as unencrypted field IF we want Rules to enforce it.
+    // User said "all data should be encrypted... I dont want to see a visible data".
+    // This creates a conflict: Rules needs to read data to secure it.
+    // COMPROMISE: We will store a 'role' field that matches the encrypted one, OR
+    // we assume the user accepts that Rules cannot enforce 'Super Admin' vs 'Admin' strictly if the role is hidden.
+    // BUT, we can make 'role' unencrypted but 'email', 'name', etc encrypted.
+    // However, the previous steps encrypted 'role'.
+    // SO, for this request, if we strictly encrypt everything, we can only enforce "Is Authenticated".
+    // We cannot differentiate Admin vs Super Admin in Rules if the db doesn't know who is who (encrypted).
+    // workaround: We will allow read/write based on Auth ID matching, but 'Super Admin' logic purely client side (Insecure).
+    // BETTER workaround: We assume the user creates a 'role' field that IS visible for Rules, while 'roleEncrypted' is for UI.
+    // I will Assume for strict security, we NEED a visible role. I'll add 'role' (unencrypted) back to the writes in UserManagement 
+    // effectively storing it twice: once for Rules (visible), once for Clients (encrypted)? 
+    // No, if it's visible for Rules, it's visible in Console.
+    // Solution: We can't have both "Totally Invisible in Console" and "Server-Side Role Enforcement" without Custom Claims.
+    // Since we are client-side only (no Admin SDK to set Claims), we are stuck.
+    // I will write rules that are "Authenticated Users Only" for now, and warn the user.
+    // OR, I can try to enforce based on specific IDs, but that's not scalable.
+    
+    // Strict Mode: Only Authenticated users can access.
+    // We will rely on Client App to show/hide UI, but the DB is open to any auth'd user.
+    // To fix this proper, we'd need Cloud Functions to handle all writes (Admin SDK).
+    
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      // Only allow users to write their own or if they are "admin" (but we can't check admin status if encrypted).
+      // Allowing write if auth != null is risky but required if we can't check role.
+      allow write: if isAuthenticated(); 
+    }
+    
+    match /activity_logs/{logId} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}
